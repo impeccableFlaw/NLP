@@ -1,0 +1,570 @@
+# -*- coding: utf-8 -*-
+"""NLP 2-grams and 3-grams / Beam search and more
+
+"""
+
+!pip install -U nltk
+
+import nltk
+nltk.download('gutenberg')
+nltk.download('punkt')
+from nltk.corpus import gutenberg
+from nltk import sent_tokenize
+from sklearn.model_selection import train_test_split
+
+TRAINING = 'training'
+DEVELOPING = 'developing'
+TESTING = 'testing'
+#Getting the reuters corpus
+income_sentences = gutenberg.raw('austen-emma.txt')
+
+sentences = sent_tokenize(income_sentences)
+
+#Splitting the data
+training_data, other_data = train_test_split(sentences, test_size=0.2, random_state=25)
+
+#Further splitting 
+developing_data, testing_data = train_test_split(other_data, test_size=0.5, random_state=25)
+
+from pprint import pprint
+from nltk.tokenize import TweetTokenizer
+from collections import Counter
+import copy
+from nltk.util import ngrams
+
+tweet_wt = TweetTokenizer()
+
+sentences_tokenized = []
+sentences_tokenized_freq = []
+
+for sent in training_data:
+    sent_tok = tweet_wt.tokenize(sent)
+
+    sentences_tokenized.append(sent_tok)
+
+    sentences_tokenized_freq += sent_tok
+    # print(sent_tok)
+    # print("_________________")
+    #print(sentences_tokenized) 
+
+    #--------------------------
+    #Frequency of words in corpus
+count = nltk.FreqDist(sentences_tokenized_freq)
+#print('{} most common tokens: \n')
+
+#print(count.most_common(10))
+
+freq_sentences = list(filter(lambda x: x[1] < 10, nltk.FreqDist(sentences_tokenized_freq).items()))
+#print(freq_sentences)
+    
+    
+vocabulary = []
+vocab = []
+
+vocabulary = list(filter(lambda x: x[1] >= 10, nltk.FreqDist(sentences_tokenized_freq).items()))
+          
+for i in range(len(vocabulary)):
+     vocab.append(vocabulary[i][0])
+          
+
+vocabulary.append("UNK")
+vocabulary.append("<s>")
+vocabulary.append("<e>")
+vocab.append("UNK")
+vocab.append("<s>")
+vocab.append("<e>")
+
+print('Vocabulary is: ', vocab)
+print(len(vocab))
+
+sentences_token = [w for (w,q) in freq_sentences]
+#print(sentences_token)
+
+#replace OOV (out of vocabulary) words
+sentences_tokenized_oov = [] #Sentences with OOV words
+for sent in sentences_tokenized:
+    #print(sent)
+
+    sent_temp = sent
+    for i in range(0,len(sent)):
+        if sent[i] in sentences_token:
+            sent_temp[i] = "UNK"
+
+    sentences_tokenized_oov.append(sent)
+
+
+def Tokenize(data):
+
+  sentences_tokenizeD = []
+
+  for sent in data:
+    sent_tok = tweet_wt.tokenize(sent)
+
+    sentences_tokenizeD.append(sent_tok)
+
+  return sentences_tokenizeD
+
+
+def replacing_OOV(data):
+
+    sentences_tokenizeD = Tokenize(data)
+    sentences_tokenized_ov = [] #Sentences with OOV words
+    
+    for sent in sentences_tokenizeD:
+        #print(sent)
+        sent_temp = sent
+        for i in range(0,len(sent)):
+            if sent[i] not in vocab:
+              sent_temp[i] = "UNK"
+
+        sentences_tokenized_ov.append(sent)
+      
+    return sentences_tokenized_ov
+
+
+
+
+
+def CalculateGrams(data):
+    #-------------------------------------------
+    unigram_counter = Counter()
+    bigram_counter = Counter()
+    trigram_counter = Counter()
+
+    #bigram,trigram
+    for sent in sentences_tokenized_oov:
+        #print(sent)
+        unigram_counter.update([gram for gram in ngrams(sent, 1, pad_left=True, pad_right=True,
+                                                      left_pad_symbol='<s>',right_pad_symbol='<e>') ])
+        bigram_counter.update([gram for gram in ngrams(sent, 2, pad_left=True, pad_right=True,
+                                                      left_pad_symbol='<s>',right_pad_symbol='<e>') ])
+        trigram_counter.update([gram for gram in ngrams(sent, 3, pad_left=True, pad_right=True,
+                                                      left_pad_symbol='<s>',right_pad_symbol='<e>') ])
+        
+    # pprint(unigram_counter.most_common(10))  
+    # pprint(bigram_counter.most_common(10))
+    # pprint(trigram_counter.most_common(10))
+
+    return unigram_counter, bigram_counter, trigram_counter
+
+unigram_counter,bigram_counter,trigram_counter = CalculateGrams(training_data)
+
+#Check Results with ngrams() above is the same
+#---------------------------------------------
+
+unigram_counter2 = Counter()
+bigram_counter2 = Counter()
+trigram_counter2 = Counter()
+
+for sent in sentences_tokenized:
+
+    # Update the unigram counter
+    unigram_counter2.update([(gram,) for gram in sent])
+    
+    # Update the bigram counter
+    bigram_pad_sent = ["<s>"] + sent +  ['<e>']    
+    bigram_counter2.update([(gram1, gram2) for gram1, gram2 in zip(bigram_pad_sent, bigram_pad_sent[1:])])
+
+    # Update the trigram counter
+    trigram_pad_sent = ["<s>"]*2 + sent +  ['<e>']*2
+    trigram_counter2.update([(gram1, gram2, gram3) for gram1, gram2, gram3 in zip(trigram_pad_sent, trigram_pad_sent[1:], trigram_pad_sent[2:])]) 
+
+
+pprint(unigram_counter2.most_common(5))   
+pprint(bigram_counter2.most_common(5))
+pprint(trigram_counter2.most_common(5))
+
+import math
+import sys
+
+
+# We should fine-tune alpha on a held-out dataset
+alpha = 0
+
+dev_sentences_tokenized = replacing_OOV(developing_data)
+
+# Calculate vocab size 
+vocab_size = len(vocab)
+
+# Bigram prob + laplace smoothing
+best_bigram_alpha = alpha
+best_bigram_HC = math.inf
+
+for i in range(1,11):
+    alpha = i/1000
+    print(alpha)
+
+    #--------------------------------------
+    #Entropy and Perplexity
+    sum_prob = 0
+    bigram_cnt = 0
+
+    for sent in dev_sentences_tokenized:
+        sent = ['<s>'] + sent + ['<e>']
+
+        # Iterate over the bigrmas of the sentence
+        for idx in range(1, len(sent)):
+            bigram_prob = (bigram_counter[(sent[idx-1], sent[idx])] + alpha) / (unigram_counter[(sent[idx-1],)] + alpha*vocab_size)
+            sum_prob += math.log2(bigram_prob)
+            bigram_cnt += 1
+
+    HC = -sum_prob / bigram_cnt
+    perpl = math.pow(2,HC)
+    print("Cross Entropy: {0:.3f}".format(HC))
+    print("perplexity: {0:.3f}".format(perpl))
+
+    if HC < best_bigram_HC:
+         
+         best_bigram_HC = HC
+         best_bigram_alpha = alpha
+
+print('Bigram best alpha is: ', best_bigram_alpha)
+
+bigram_prob_dictionary = {}
+
+for sent in sentences_tokenized:
+        sent = ['<s>'] + sent + ['<e>']
+
+        # Iterate over the bigrmas of the sentence
+        for idx in range(1, len(sent)):
+            bigram_prob = (bigram_counter[(sent[idx-1], sent[idx])] + best_bigram_alpha) / (unigram_counter[(sent[idx-1],)] + best_bigram_alpha*vocab_size)
+            bigram_prob_dictionary[(sent[idx-1], sent[idx])] = bigram_prob
+
+import math
+import sys
+
+# We should fine-tune alpha on a held-out dataset
+alpha = 0
+
+
+
+# Calculate vocab size 
+vocab_size = len(vocab)
+
+# Trigram prob + laplace smoothing
+best_trigram_alpha = alpha
+best_trigram_HC = math.inf
+
+for i in range(1,11):
+    alpha = i/1000
+    print(alpha)
+
+    sum_prob = 0
+    trigram_cnt = 0
+
+    for sent in dev_sentences_tokenized:
+        sent = ['<s>'] + ['<s>'] + sent + ['<e>'] + ['<e>']
+
+        for idx in range(2,len(sent) - 1):
+            trigram_prob = (trigram_counter[(sent[idx-2],sent[idx-1], sent[idx])] + alpha) / (bigram_counter[(sent[idx-2],sent[idx-1])] + alpha*vocab_size)
+            sum_prob += math.log2(trigram_prob)
+            trigram_cnt+=1
+
+    HC = -sum_prob / trigram_cnt
+    perpl = math.pow(2,HC)
+    print("Cross Entropy: {0:.3f}".format(HC))
+    print("perplexity: {0:.3f}".format(perpl))
+
+    if HC < best_trigram_HC:
+
+         best_trigram_HC = HC
+         best_trigram_alpha = alpha
+
+print('Trigram best alpha is: ', best_trigram_alpha)
+
+trigram_prob_dictionary = {}
+
+for sent in sentences_tokenized:
+        sent = ['<s>'] + sent + ['<e>']
+
+        # Iterate over the bigrmas of the sentence
+        for idx in range(1, len(sent)):
+            trigram_prob = (bigram_counter[(sent[idx-1], sent[idx])] + best_trigram_alpha) / (unigram_counter[(sent[idx-1],)] + best_trigram_alpha*vocab_size)
+            trigram_prob_dictionary[(sent[idx-1], sent[idx])] = trigram_prob
+
+_#kneser-ney
+
+import math
+
+all_prevs = []
+
+for v in vocabulary:
+    prevv = 0
+    for v2 in vocabulary:
+        if bigram_counter[(v2, v)] > 0:
+            prevv += 1
+    all_prevs.append(prevv)
+
+# best_delta_so_far = 0.001
+for i in range(1,11):
+    delta = i/1000
+
+    print(delta)
+
+    sum_prob_kn = 0
+    number_of_bigrams = 0
+
+    for sent in dev_sentences_tokenized:
+        sent = ['<s>'] + sent + ['<e>']
+        # print(sent)
+         
+       # Iterate over the bigrmas of the sentence
+
+        for idx in range(1, len(sent)):
+            prevwk = 0
+            sumprevv = 0
+            for v_idx in range(len(vocabulary)):
+                if bigram_counter[(vocabulary[v_idx],sent[idx])] > 0:
+                    prevwk += 1
+                if bigram_counter[(sent[idx-1],vocabulary[v_idx])] == 0:
+                    sumprevv += all_prevs[v_idx]
+            if sumprevv != 0:
+                Prevwk = prevwk/sumprevv
+            else:
+                Prevwk = 0
+
+            if bigram_counter[(sent[idx-1],sent[idx])]>0:
+                if unigram_counter[(sent[idx-1],)] != 0:
+                  prob_kn = (bigram_counter[(sent[idx-1],sent[idx])]-delta)/unigram_counter[(sent[idx-1],)]
+                else:
+                  prob_kn = 0
+            else:
+               # calc a
+               v_counter = 0             
+               for v_idx in range(len(vocabulary)):
+                
+                if bigram_counter[(sent[idx-1], vocabulary[v_idx])] > 0:
+                  v_counter += 1
+                if unigram_counter[(sent[idx-1],)] != 0:
+                  awk = delta/unigram_counter[(sent[idx-1],)]*v_counter
+                else:
+                  awk = 0
+
+               prob_kn = awk*Prevwk
+
+            if prob_kn != 0:
+                sum_prob_kn += math.log2(prob_kn)
+
+            number_of_bigrams += 1
+
+    HC = -sum_prob_kn / number_of_bigrams
+    perpl = math.pow(2,HC)
+    print("Cross Entropy: {0:.3f}".format(HC))
+    print("perplexity: {0:.3f}".format(perpl))
+
+# testing laplace smoothing 
+
+testing_sentences_tokenized = replacing_OOV(testing_data)
+
+# testing bigram laplace
+
+sum_prob = 0
+bigram_cnt = 0
+
+for sent in testing_sentences_tokenized:
+    sent = ['<s>'] + sent + ['<e>']
+
+    # Iterate over the bigrmas of the sentence
+    for idx in range(1, len(sent)):
+        bigram_prob = (bigram_counter[(sent[idx-1], sent[idx])] + best_bigram_alpha) / (unigram_counter[(sent[idx-1],)] + best_bigram_alpha*vocab_size)
+        sum_prob += math.log2(bigram_prob)
+        bigram_cnt += 1
+
+HC = -sum_prob / bigram_cnt
+perpl = math.pow(2,HC)
+print('Bigram')
+print("Cross Entropy: {0:.3f}".format(HC))
+print("perplexity: {0:.3f}".format(perpl))
+
+# testing trigram laplace
+
+sum_prob = 0
+trigram_cnt = 0
+
+for sent in testing_sentences_tokenized:
+    sent = ['<s>'] + ['<s>'] + sent + ['<e>'] + ['<e>']
+
+    for idx in range(2,len(sent) - 1):
+        trigram_prob = (trigram_counter[(sent[idx-2],sent[idx-1], sent[idx])] + best_trigram_alpha) / (bigram_counter[(sent[idx-2],sent[idx-1])] + best_trigram_alpha*len(vocab))
+        sum_prob += math.log2(trigram_prob)
+        trigram_cnt+=1
+
+HC = -sum_prob / trigram_cnt
+perpl = math.pow(2,HC)
+print('Trigram')
+print("Cross Entropy: {0:.3f}".format(HC))
+print("perplexity: {0:.3f}".format(perpl))
+
+sum_prob_kn = 0
+number_of_bigrams = 0
+delta = 0.01
+
+for sent in testing_sentences_tokenized:
+    sent = ['<s>'] + sent + ['<e>']
+       
+
+    # Iterate over the bigrmas of the sentence
+    for idx in range(1, len(sent)):
+        prevwk = 0
+        sumprevv = 0
+        for v_idx in range(len(vocabulary)):
+            if bigram_counter[(vocabulary[v_idx],sent[idx])] > 0:
+                prevwk += 1
+              
+            if bigram_counter[(sent[idx-1],vocabulary[v_idx])] == 0:
+                sumprevv += all_prevs[v_idx]
+
+        if sumprevv != 0:
+            Prevwk = prevwk/sumprevv         
+        else:
+            Prevwk = 0
+
+        if bigram_counter[(sent[idx-1],sent[idx])]>0:
+            if unigram_counter[(sent[idx-1],)] != 0:
+              prob_kn = (bigram_counter[(sent[idx-1],sent[idx])]-delta)/unigram_counter[(sent[idx-1],)]
+            else:
+              prob_kn = 0
+        else:
+            # calc a
+            v_counter = 0
+          
+            for v_idx in range(len(vocabulary)):
+              if bigram_counter[(sent[idx-1], vocabulary[v_idx])] > 0:
+                v_counter += 1
+
+              if unigram_counter[(sent[idx-1],)] != 0:
+                awk = delta/unigram_counter[(sent[idx-1],)]*v_counter
+              else:
+                awk = 0
+
+            prob_kn = awk*Prevwk
+
+        if prob_kn != 0:
+            sum_prob_kn += math.log2(prob_kn)
+        number_of_bigrams += 1
+
+HC = -sum_prob_kn / number_of_bigrams
+perpl = math.pow(2,HC)
+print('Bigram KN')
+print("Cross Entropy: {0:.3f}".format(HC))
+print("perplexity: {0:.3f}".format(perpl))
+
+#Levenshtein distance used in Beam search below
+
+import numpy as np
+
+def edit_distance(word1, word2):
+
+      if len(word1) == 0: return len(word2)
+
+      if len(word2) == 0: return len(word1)
+
+      return min(edit_distance(word1[1:], word2[1:])+2*(word1[0] != word2[0]),
+
+      edit_distance(word1[1:], word2)+1,
+
+      edit_distance(word1, word2[1:])+1)
+
+def levenshtein(word1, word2):
+
+      if len(word1) == 0: return len(word2)
+
+      if len(word2) == 0: return len(word1)
+
+      return min(levenshtein(word1[1:], word2[1:])+(word1[0] != word2[0]),
+
+      levenshtein(word1[1:], word2)+1,
+
+      levenshtein(word1, word2[1:])+1)
+
+def get_best_distances(vocabulary, word, max_distance = 4, method = 'EDIT_DISTANCE'):
+      
+
+      best_vocwords = []
+      best_distances = []
+
+      for i in range(len(vocabulary)-3):
+
+            (v_word, _) = vocabulary[i]
+            if method == 'EDIT_DISTANCE':
+                distance = edit_distance(word, v_word)
+            elif method == 'LEVENSHTEIN':
+                distance = levenshtein(word, v_word)
+           
+            if distance <= max_distance:
+
+                  best_vocwords.append(v_word)
+                  best_distances.append(distance)
+
+      index_table = sorted(range(len(best_distances)), key=lambda k: best_distances[k])
+      best_vocwords = [best_vocwords[i] for i in index_table]
+      best_distances = [best_distances[i] for i in index_table]
+
+
+      return best_vocwords[:5], best_distances[:5]
+
+def get_unique_numbers(numbers):
+    unique = []
+    for number in numbers:
+        if number not in unique:
+            unique.append(number)
+    return unique
+
+# beam search decoder
+from nltk.tokenize import TweetTokenizer
+
+#levenshtein('plays', 'plis')
+
+user_input = input()
+
+tweet_wt = TweetTokenizer()
+
+sent_tok = tweet_wt.tokenize(user_input)
+sent_tok = ['<s>'] + sent_tok
+
+lambda1 = 0.7
+lambda2 = 0.3
+
+kappa = 2
+
+print('Calculating', kappa, 'best sequences..')
+
+best_combinations = [(['<s>'], 0)]
+
+#[[<s>, he, ],
+#[<s>, her, ]]
+
+for i in range(1, len(sent_tok)):
+
+    best_vocwords, best_distances = get_best_distances(vocabulary, sent_tok[i], max_distance=len(sent_tok[i]), method='EDIT_DISTANCE')
+    all_bigrams = []
+    temp_sequences = []
+
+    for k in range(len(best_combinations)):
+ 
+        for j in range(len(best_vocwords)):
+            
+            (seq, score) = best_combinations[k]
+            try:
+                probtk = bigram_prob_dictionary[seq[-1], best_vocwords[j]]
+            except:
+
+                probtk = 1/vocab_size
+            probwtk = 1/(best_distances[j] + 1)
+
+            new_seq = seq + [best_vocwords[j]]
+
+            total_prob = - lambda1*math.log2(probtk) - lambda2*math.log2(probwtk)
+
+            new_score = score - total_prob
+            all_bigrams.append((new_seq, new_score))
+
+        temp_sequences += all_bigrams
+        temp_sequences = get_unique_numbers(temp_sequences)
+        temp_sequences = sorted(temp_sequences, key = lambda val: val[1], reverse = True)
+
+    best_combinations = temp_sequences[:kappa]
+
+for x,y in best_combinations:
+    print('Sequence is: ', x)
+    print('Score is: ', y)
